@@ -10,27 +10,39 @@ export default async function handler(req, res) {
   const { q, limit = 50 } = req.query;
   if (!q) return res.status(400).json({ error: 'Missing query param: q' });
 
-  const CLIENT_ID = process.env.ML_CLIENT_ID;
+  const CLIENT_ID     = process.env.ML_CLIENT_ID;
+  const CLIENT_SECRET = process.env.ML_CLIENT_SECRET;
 
   try {
-    // ML public search — works with just the App ID as identifier
-    // No token needed for public product search
-    const searchUrl = `https://api.mercadolibre.com/sites/MLM/search?q=${encodeURIComponent(q)}&limit=${limit}&sort=relevance&app_id=${CLIENT_ID}`;
-
-    const searchRes = await fetch(searchUrl, {
+    // Step 1: Get token with client_credentials
+    const tokenRes = await fetch('https://api.mercadolibre.com/oauth/token', {
+      method: 'POST',
       headers: {
-        'User-Agent': 'Mozilla/5.0',
         'Accept': 'application/json',
-      }
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: `grant_type=client_credentials&client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`,
     });
 
-    if (!searchRes.ok) {
-      const err = await searchRes.text();
-      return res.status(502).json({ error: 'ML search error', detail: err });
+    const tokenText = await tokenRes.text();
+    if (!tokenRes.ok) {
+      return res.status(502).json({ error: 'Token error', detail: tokenText });
     }
 
-    const data = await searchRes.json();
-    return res.status(200).json(data);
+    const { access_token } = JSON.parse(tokenText);
+
+    // Step 2: Search products with token
+    const searchRes = await fetch(
+      `https://api.mercadolibre.com/sites/MLM/search?q=${encodeURIComponent(q)}&limit=${limit}&sort=relevance`,
+      { headers: { 'Authorization': `Bearer ${access_token}` } }
+    );
+
+    const searchText = await searchRes.text();
+    if (!searchRes.ok) {
+      return res.status(502).json({ error: 'ML search error', detail: searchText });
+    }
+
+    return res.status(200).json(JSON.parse(searchText));
 
   } catch (err) {
     return res.status(500).json({ error: 'Server error', detail: err.message });
